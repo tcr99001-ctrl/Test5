@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 // ==================================================================
-// [필수] 사용자님의 Firebase 설정값
+// [필수] 사용자님의 Firebase 설정값 (그대로 유지)
 // ==================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBPd5xk9UseJf79GTZogckQmKKwwogneco",
@@ -23,20 +23,23 @@ const firebaseConfig = {
   appId: "1:402376205992:web:be662592fa4d5f0efb849d"
 };
 
-// --- Firebase Init ---
+// --- Firebase Init (에러 방지) ---
 let firebaseApp;
 let db;
 let auth;
 
 try {
-  if (!getApps().length) firebaseApp = initializeApp(firebaseConfig);
-  else firebaseApp = getApps()[0];
+  if (!getApps().length) {
+    firebaseApp = initializeApp(firebaseConfig);
+  } else {
+    firebaseApp = getApps()[0];
+  }
   db = getFirestore(firebaseApp);
   auth = getAuth(firebaseApp);
-} catch (e) { console.error(e); }
+} catch (e) { console.error("Firebase Init Error:", e); }
 
 // --- Game Data & Constants ---
-const COLORS = ['white', 'blue', 'green', 'red', 'black']; // 다이아, 사파이어, 에메랄드, 루비, 줄마노
+const COLORS = ['white', 'blue', 'green', 'red', 'black']; 
 const GEM_STYLE = {
   white: 'bg-slate-100 border-slate-300 text-slate-800',
   blue: 'bg-blue-500 border-blue-700 text-white',
@@ -46,7 +49,7 @@ const GEM_STYLE = {
   gold: 'bg-yellow-400 border-yellow-600 text-yellow-900'
 };
 
-// 샘플 카드 데이터 생성기 (실제 게임엔 90장이 필요하지만, 로직 테스트용으로 일부 생성)
+// 카드 생성기
 const generateCards = () => {
   const cards = [];
   const tiers = [1, 2, 3];
@@ -54,14 +57,13 @@ const generateCards = () => {
     for (let i = 0; i < 20; i++) {
       const bonus = COLORS[Math.floor(Math.random() * 5)];
       const cost = {};
-      // 랜덤 비용 생성
-      const costAmount = tier === 1 ? 3 : tier === 2 ? 6 : 10; // 티어별 총 비용 대략치
+      const costAmount = tier === 1 ? 3 : tier === 2 ? 6 : 10;
       for(let j=0; j<3; j++) {
         const c = COLORS[Math.floor(Math.random() * 5)];
         cost[c] = (cost[c] || 0) + (tier + Math.floor(Math.random()*2));
       }
       cards.push({
-        id: `t${tier}_${i}_${Date.now()}`,
+        id: `t${tier}_${i}_${Math.random().toString(36).substr(2,9)}`, // ID 생성 안전하게 변경
         tier,
         bonus,
         points: tier === 1 ? (Math.random()>0.8 ? 1 : 0) : tier === 2 ? (Math.floor(Math.random()*3)+1) : (Math.floor(Math.random()*3)+3),
@@ -72,7 +74,7 @@ const generateCards = () => {
   return cards;
 };
 
-// 귀족 데이터
+// 귀족
 const NOBLES = [
   { id: 'n1', points: 3, req: { white: 4, blue: 4, green: 0, red: 0, black: 0 } },
   { id: 'n2', points: 3, req: { white: 0, blue: 0, green: 4, red: 4, black: 0 } },
@@ -81,7 +83,7 @@ const NOBLES = [
   { id: 'n5', points: 3, req: { white: 0, blue: 0, green: 0, red: 4, black: 4 } },
 ];
 
-export default function SplendorGame() {
+export default function SplendorGameSafe() {
   const [user, setUser] = useState(null);
   const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState('');
@@ -89,18 +91,19 @@ export default function SplendorGame() {
   const [players, setPlayers] = useState([]);
   
   // Modals
-  const [activeCard, setActiveCard] = useState(null); // 카드 상세 모달
-  const [showGemModal, setShowGemModal] = useState(false); // 보석 가져오기 모달
-  const [showOpponent, setShowOpponent] = useState(null); // 상대방 정보 모달
+  const [activeCard, setActiveCard] = useState(null);
+  const [showGemModal, setShowGemModal] = useState(false);
+  const [showOpponent, setShowOpponent] = useState(null);
   
-  // Local Selection State
+  // Local Selection
   const [selectedGems, setSelectedGems] = useState([]);
 
   // Auth & Sync
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const p = new URLSearchParams(window.location.search);
-      if(p.get('room')) setRoomCode(p.get('room').toUpperCase());
+      const code = p.get('room');
+      if (code && code.length === 4) setRoomCode(code.toUpperCase());
     }
     if(!auth) return;
     const unsub = onAuthStateChanged(auth, u => {
@@ -112,7 +115,10 @@ export default function SplendorGame() {
 
   useEffect(() => {
     if(!user || !roomCode || roomCode.length!==4 || !db) return;
-    const unsubRoom = onSnapshot(doc(db,'rooms',roomCode), s => setRoomData(s.exists()?s.data():null));
+    const unsubRoom = onSnapshot(doc(db,'rooms',roomCode), s => {
+      if (s.exists()) setRoomData(s.data());
+      else setRoomData(null);
+    });
     const unsubPlayers = onSnapshot(collection(db,'rooms',roomCode,'players'), s => {
       const list=[]; s.forEach(d=>list.push({id:d.id, ...d.data()}));
       setPlayers(list);
@@ -121,12 +127,12 @@ export default function SplendorGame() {
   }, [user, roomCode]);
 
   // --- Logic Helpers ---
-  const myData = players.find(p => p.id === user?.uid);
+  // ★ [안전장치 1] 데이터가 로딩되기 전엔 undefined 반환
+  const myData = user ? players.find(p => p.id === user.uid) : null;
   const isMyTurn = roomData?.status === 'playing' && roomData?.turnOrder?.[roomData.turnIndex] === user?.uid;
 
-  // 구매 가능 여부 계산
   const canBuy = (card, player) => {
-    if (!player) return false;
+    if (!player || !player.gems) return false; // 안전장치 추가
     let goldNeeded = 0;
     
     for (const color of COLORS) {
@@ -147,7 +153,6 @@ export default function SplendorGame() {
     if(!playerName) return alert('이름 입력');
     const code = Math.random().toString(36).substring(2,6).toUpperCase();
     
-    // 초기 덱 생성
     const allCards = generateCards();
     const board = { 1: allCards.filter(c=>c.tier===1).slice(0,4), 2: allCards.filter(c=>c.tier===2).slice(0,4), 3: allCards.filter(c=>c.tier===3).slice(0,4) };
     const decks = { 1: allCards.filter(c=>c.tier===1).slice(4), 2: allCards.filter(c=>c.tier===2).slice(4), 3: allCards.filter(c=>c.tier===3).slice(4) };
@@ -156,7 +161,7 @@ export default function SplendorGame() {
       hostId: user.uid, status: 'lobby',
       board, decks, 
       bank: { white: 7, blue: 7, green: 7, red: 7, black: 7, gold: 5 },
-      nobles: NOBLES.slice(0, 4), // 3~4인용 예시
+      nobles: NOBLES.slice(0, 4),
       turnIndex: 0, turnOrder: []
     });
     await setDoc(doc(db,'rooms',code,'players',user.uid), { 
@@ -188,7 +193,7 @@ export default function SplendorGame() {
 
   // 1. 보석 가져오기
   const confirmTakeGems = async () => {
-    // 유효성 검사 (간소화: 3개 다른색 or 2개 같은색)
+    if (!myData) return;
     const counts = {};
     selectedGems.forEach(c => counts[c] = (counts[c]||0)+1);
     const types = Object.keys(counts).length;
@@ -200,9 +205,8 @@ export default function SplendorGame() {
       if (roomData.bank[selectedGems[0]] >= 4) isValid = true;
     }
 
-    if (!isValid) return alert("보석 규칙에 맞지 않습니다.\n(서로 다른 3개 또는 4개 이상 남은 같은 색 2개)");
+    if (!isValid) return alert("규칙: 서로 다른 3개 또는 4개 이상 남은 같은 색 2개");
 
-    // DB 업데이트
     const newBank = { ...roomData.bank };
     const myNewGems = { ...myData.gems };
     
@@ -220,12 +224,11 @@ export default function SplendorGame() {
 
   // 2. 카드 구매
   const buyCard = async (card, fromReserved = false) => {
-    if (!canBuy(card, myData)) return alert("자원이 부족합니다.");
+    if (!myData || !canBuy(card, myData)) return alert("자원이 부족합니다.");
 
     const payment = {};
     let remainingGoldNeeded = 0;
     
-    // 비용 지불 계산
     for (const color of COLORS) {
       const cost = card.cost[color] || 0;
       const bonus = myData.bonuses[color] || 0;
@@ -240,12 +243,10 @@ export default function SplendorGame() {
       }
     }
 
-    // DB 업데이트 준비
     const newBank = { ...roomData.bank };
     const myNewGems = { ...myData.gems };
     const myNewBonuses = { ...myData.bonuses };
     
-    // 지불
     for (const c of COLORS) {
       if (payment[c]) {
         newBank[c] += payment[c];
@@ -257,11 +258,9 @@ export default function SplendorGame() {
       myNewGems.gold -= remainingGoldNeeded;
     }
 
-    // 획득
     myNewBonuses[card.bonus]++;
     const newScore = myData.score + card.points;
 
-    // 보드 업데이트 (빈자리 채우기)
     const updates = { 
       bank: newBank, 
       turnIndex: (roomData.turnIndex + 1) % players.length 
@@ -270,24 +269,18 @@ export default function SplendorGame() {
     if (!fromReserved) {
       const tierBoard = [...roomData.board[card.tier]];
       const cardIdx = tierBoard.findIndex(c => c.id === card.id);
-      
-      // 덱에서 새 카드 뽑기
       const tierDeck = [...roomData.decks[card.tier]];
-      const newCard = tierDeck.pop(); // 덱에서 하나 꺼냄
-      
+      const newCard = tierDeck.pop();
       if (newCard) tierBoard[cardIdx] = newCard;
-      else tierBoard.splice(cardIdx, 1); // 덱 떨어지면 빈칸
-
+      else tierBoard.splice(cardIdx, 1);
       updates[`board.${card.tier}`] = tierBoard;
       updates[`decks.${card.tier}`] = tierDeck;
     } else {
-      // 찜한 목록에서 제거
       await updateDoc(doc(db, 'rooms', roomCode, 'players', user.uid), {
         reserved: arrayRemove(card)
       });
     }
 
-    // 플레이어 업데이트
     await updateDoc(doc(db, 'rooms', roomCode), updates);
     await updateDoc(doc(db, 'rooms', roomCode, 'players', user.uid), {
       gems: myNewGems,
@@ -295,27 +288,22 @@ export default function SplendorGame() {
       score: newScore,
       cards: arrayUnion(card)
     });
-
-    // 귀족 체크 (간소화: 조건 맞으면 자동 방문)
-    // 실제로는 귀족 방문 로직이 추가되어야 함
     
     setActiveCard(null);
   };
 
   // 3. 찜하기
   const reserveCard = async (card) => {
-    if (myData.reserved.length >= 3) return alert("3장까지만 찜할 수 있습니다.");
+    if (!myData || myData.reserved.length >= 3) return alert("3장까지만 찜 가능합니다.");
 
     const updates = { turnIndex: (roomData.turnIndex + 1) % players.length };
     const playerUpdates = { reserved: arrayUnion(card) };
 
-    // 황금 토큰 획득
     if (roomData.bank.gold > 0) {
       updates['bank.gold'] = roomData.bank.gold - 1;
       playerUpdates['gems.gold'] = (myData.gems.gold || 0) + 1;
     }
 
-    // 보드 업데이트
     const tierBoard = [...roomData.board[card.tier]];
     const cardIdx = tierBoard.findIndex(c => c.id === card.id);
     const tierDeck = [...roomData.decks[card.tier]];
@@ -334,7 +322,7 @@ export default function SplendorGame() {
 
 
   // --- Render ---
-  if(!user) return <div className="h-screen flex items-center justify-center bg-slate-900 text-amber-500 font-bold">Splendor Loading...</div>;
+  if(!user) return <div className="h-screen flex items-center justify-center bg-slate-900 text-amber-500 font-bold">Splendor Connecting...</div>;
 
   // 1. Lobby
   if (!roomData || roomData.status === 'lobby') {
@@ -342,7 +330,7 @@ export default function SplendorGame() {
       <div className="h-screen bg-slate-900 text-white p-6 flex flex-col justify-center max-w-md mx-auto space-y-6">
         <h1 className="text-4xl font-black text-center text-amber-500 tracking-widest">SPLENDOR</h1>
         <div className="bg-slate-800 p-6 rounded-2xl border border-slate-700">
-           {!isJoined ? (
+           {!user || !players.find(p => p.id === user.uid) ? (
              <div className="space-y-4">
                <input value={playerName} onChange={e=>setPlayerName(e.target.value)} placeholder="닉네임" className="w-full bg-slate-700 p-3 rounded text-white"/>
                <div className="flex gap-2">
@@ -365,6 +353,11 @@ export default function SplendorGame() {
     );
   }
 
+  // ★ [안전장치 2] 게임 중인데 내 정보가 아직 로딩 안 됐으면 대기
+  if (roomData.status === 'playing' && !myData) {
+    return <div className="h-screen flex items-center justify-center bg-slate-900 text-slate-400">플레이어 정보 로딩 중...</div>;
+  }
+
   // 2. Main Game Board
   return (
     <div className="h-screen bg-slate-900 text-slate-100 font-sans flex flex-col overflow-hidden relative">
@@ -383,7 +376,7 @@ export default function SplendorGame() {
         ))}
       </div>
 
-      {/* Center: Board (Scrollable) */}
+      {/* Center: Board */}
       <div className="flex-1 overflow-y-auto p-4 pb-40 space-y-6">
         
         {/* Nobles */}
@@ -402,7 +395,7 @@ export default function SplendorGame() {
           ))}
         </div>
 
-        {/* Card Grid (Tier 3 -> 1) */}
+        {/* Card Grid */}
         {[3, 2, 1].map(tier => (
           <div key={tier} className="space-y-2">
             <div className="flex items-center gap-2">
@@ -436,7 +429,7 @@ export default function SplendorGame() {
         ))}
       </div>
 
-      {/* Floating Action Button (Take Gems) */}
+      {/* FAB */}
       {isMyTurn && (
         <button 
           onClick={() => setShowGemModal(true)}
@@ -446,7 +439,7 @@ export default function SplendorGame() {
         </button>
       )}
 
-      {/* Bottom: My Dashboard (Sticky) */}
+      {/* Bottom: My Dashboard */}
       <div className="absolute bottom-0 w-full bg-slate-950/90 backdrop-blur-md border-t border-slate-800 p-4 pb-6 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-10">
         <div className="flex justify-between items-end mb-3">
           <div>
@@ -459,7 +452,6 @@ export default function SplendorGame() {
           {isMyTurn && <div className="px-3 py-1 bg-green-500 text-white text-xs font-bold rounded-full animate-pulse">MY TURN</div>}
         </div>
         
-        {/* Resources */}
         <div className="flex justify-between gap-1">
           {[...COLORS, 'gold'].map(color => (
             <div key={color} className="flex flex-col items-center gap-1 flex-1">
@@ -477,12 +469,9 @@ export default function SplendorGame() {
       </div>
 
       {/* --- MODALS --- */}
-
-      {/* 1. Card Detail Modal */}
       {activeCard && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6" onClick={() => setActiveCard(null)}>
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl relative" onClick={e => e.stopPropagation()}>
-            {/* Card Visual */}
             <div className="aspect-[2/3] bg-slate-100 rounded-2xl border-4 border-slate-200 p-4 mb-6 relative overflow-hidden">
                <div className={`absolute top-0 right-0 p-6 rounded-bl-[3rem] ${GEM_STYLE[activeCard.bonus]} opacity-20`}></div>
                <div className="flex justify-between items-start mb-8">
@@ -497,8 +486,6 @@ export default function SplendorGame() {
                   ))}
                </div>
             </div>
-            
-            {/* Actions */}
             {isMyTurn && (
               <div className="flex gap-3">
                 <button 
@@ -506,13 +493,13 @@ export default function SplendorGame() {
                   disabled={!canBuy(activeCard, myData)}
                   className="flex-1 bg-green-600 disabled:bg-slate-300 text-white py-4 rounded-xl font-bold text-lg shadow-lg"
                 >
-                  구매하기
+                  구매
                 </button>
                 <button 
                   onClick={() => reserveCard(activeCard)}
                   className="flex-1 bg-amber-500 text-white py-4 rounded-xl font-bold text-lg shadow-lg"
                 >
-                  찜하기 (+🪙)
+                  찜 (+🪙)
                 </button>
               </div>
             )}
@@ -520,12 +507,10 @@ export default function SplendorGame() {
         </div>
       )}
 
-      {/* 2. Take Gems Modal */}
       {showGemModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
           <div className="bg-slate-900 w-full max-w-sm rounded-[2rem] p-6 border border-slate-700">
             <h3 className="text-xl font-bold text-white mb-6 text-center">보석 가져오기</h3>
-            
             <div className="grid grid-cols-3 gap-4 mb-8">
               {COLORS.map(c => {
                 const count = selectedGems.filter(g => g === c).length;
@@ -535,8 +520,8 @@ export default function SplendorGame() {
                     key={c} 
                     disabled={left <= 0 || (count >= 2) || (selectedGems.length >= 3 && !selectedGems.includes(c))}
                     onClick={() => {
-                      if (selectedGems.includes(c)) setSelectedGems(selectedGems.filter((_, i) => i !== selectedGems.indexOf(c))); // 취소
-                      else setSelectedGems([...selectedGems, c]); // 선택
+                      if (selectedGems.includes(c)) setSelectedGems(selectedGems.filter((_, i) => i !== selectedGems.indexOf(c))); 
+                      else setSelectedGems([...selectedGems, c]); 
                     }}
                     className={`aspect-square rounded-2xl flex flex-col items-center justify-center gap-1 border-2 transition-all
                       ${GEM_STYLE[c]} ${count > 0 ? 'ring-4 ring-white scale-105' : 'opacity-80'}
@@ -549,16 +534,14 @@ export default function SplendorGame() {
                 )
               })}
             </div>
-
             <div className="flex gap-2">
               <button onClick={() => { setShowGemModal(false); setSelectedGems([]); }} className="flex-1 bg-slate-800 text-slate-300 py-3 rounded-xl font-bold">취소</button>
-              <button onClick={confirmTakeGems} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30">가져오기</button>
+              <button onClick={confirmTakeGems} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg">확인</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 3. Opponent Detail Modal */}
       {showOpponent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6" onClick={() => setShowOpponent(null)}>
            <div className="bg-white w-full max-w-xs rounded-2xl p-6" onClick={e => e.stopPropagation()}>
@@ -575,9 +558,7 @@ export default function SplendorGame() {
               <div className="mt-4 pt-4 border-t">
                 <p className="text-xs text-slate-500 font-bold mb-2">찜한 카드 ({showOpponent.reserved.length})</p>
                 <div className="flex gap-2">
-                   {showOpponent.reserved.map(c => (
-                     <div key={c.id} className="w-8 h-12 bg-slate-200 rounded border border-slate-300"></div>
-                   ))}
+                   {showOpponent.reserved.map(c => <div key={c.id} className="w-8 h-12 bg-slate-200 rounded border border-slate-300"></div>)}
                 </div>
               </div>
            </div>
@@ -586,4 +567,4 @@ export default function SplendorGame() {
 
     </div>
   );
-             }
+                 }
