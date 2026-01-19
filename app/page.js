@@ -7,8 +7,8 @@ import {
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { 
-  Gem, Diamond, Circle, Layers, Crown, User, Info, 
-  ChevronRight, ShoppingCart, Lock, Plus, AlertCircle, Play
+  Gem, Crown, User, Info, ChevronRight, ShoppingCart, Lock, Plus, AlertCircle, Play, 
+  Share2, CheckCircle2, Link as LinkIcon 
 } from 'lucide-react';
 
 // ==================================================================
@@ -23,7 +23,7 @@ const firebaseConfig = {
   appId: "1:402376205992:web:be662592fa4d5f0efb849d"
 };
 
-// --- Firebase Init (에러 방지) ---
+// --- Firebase Init ---
 let firebaseApp;
 let db;
 let auth;
@@ -49,7 +49,6 @@ const GEM_STYLE = {
   gold: 'bg-yellow-400 border-yellow-600 text-yellow-900'
 };
 
-// 카드 생성기
 const generateCards = () => {
   const cards = [];
   const tiers = [1, 2, 3];
@@ -57,13 +56,12 @@ const generateCards = () => {
     for (let i = 0; i < 20; i++) {
       const bonus = COLORS[Math.floor(Math.random() * 5)];
       const cost = {};
-      const costAmount = tier === 1 ? 3 : tier === 2 ? 6 : 10;
       for(let j=0; j<3; j++) {
         const c = COLORS[Math.floor(Math.random() * 5)];
         cost[c] = (cost[c] || 0) + (tier + Math.floor(Math.random()*2));
       }
       cards.push({
-        id: `t${tier}_${i}_${Math.random().toString(36).substr(2,9)}`, // ID 생성 안전하게 변경
+        id: `t${tier}_${i}_${Math.random().toString(36).substr(2,9)}`,
         tier,
         bonus,
         points: tier === 1 ? (Math.random()>0.8 ? 1 : 0) : tier === 2 ? (Math.floor(Math.random()*3)+1) : (Math.floor(Math.random()*3)+3),
@@ -74,7 +72,6 @@ const generateCards = () => {
   return cards;
 };
 
-// 귀족
 const NOBLES = [
   { id: 'n1', points: 3, req: { white: 4, blue: 4, green: 0, red: 0, black: 0 } },
   { id: 'n2', points: 3, req: { white: 0, blue: 0, green: 4, red: 4, black: 0 } },
@@ -83,20 +80,19 @@ const NOBLES = [
   { id: 'n5', points: 3, req: { white: 0, blue: 0, green: 0, red: 4, black: 4 } },
 ];
 
-export default function SplendorGameSafe() {
+export default function SplendorWithInvite() {
   const [user, setUser] = useState(null);
   const [roomCode, setRoomCode] = useState('');
   const [playerName, setPlayerName] = useState('');
   const [roomData, setRoomData] = useState(null);
   const [players, setPlayers] = useState([]);
   
-  // Modals
+  // UI States
   const [activeCard, setActiveCard] = useState(null);
   const [showGemModal, setShowGemModal] = useState(false);
   const [showOpponent, setShowOpponent] = useState(null);
-  
-  // Local Selection
   const [selectedGems, setSelectedGems] = useState([]);
+  const [copyStatus, setCopyStatus] = useState(null); // 링크 복사 상태
 
   // Auth & Sync
   useEffect(() => {
@@ -126,24 +122,19 @@ export default function SplendorGameSafe() {
     return () => { unsubRoom(); unsubPlayers(); };
   }, [user, roomCode]);
 
-  // --- Logic Helpers ---
-  // ★ [안전장치 1] 데이터가 로딩되기 전엔 undefined 반환
+  // Logic Helpers
   const myData = user ? players.find(p => p.id === user.uid) : null;
   const isMyTurn = roomData?.status === 'playing' && roomData?.turnOrder?.[roomData.turnIndex] === user?.uid;
 
   const canBuy = (card, player) => {
-    if (!player || !player.gems) return false; // 안전장치 추가
+    if (!player || !player.gems) return false;
     let goldNeeded = 0;
-    
     for (const color of COLORS) {
       const cost = card.cost[color] || 0;
       const myBonus = player.bonuses?.[color] || 0;
       const myGem = player.gems?.[color] || 0;
-      
       const realCost = Math.max(0, cost - myBonus);
-      if (myGem < realCost) {
-        goldNeeded += (realCost - myGem);
-      }
+      if (myGem < realCost) goldNeeded += (realCost - myGem);
     }
     return (player.gems?.gold || 0) >= goldNeeded;
   };
@@ -152,17 +143,14 @@ export default function SplendorGameSafe() {
   const handleCreate = async () => {
     if(!playerName) return alert('이름 입력');
     const code = Math.random().toString(36).substring(2,6).toUpperCase();
-    
     const allCards = generateCards();
     const board = { 1: allCards.filter(c=>c.tier===1).slice(0,4), 2: allCards.filter(c=>c.tier===2).slice(0,4), 3: allCards.filter(c=>c.tier===3).slice(0,4) };
     const decks = { 1: allCards.filter(c=>c.tier===1).slice(4), 2: allCards.filter(c=>c.tier===2).slice(4), 3: allCards.filter(c=>c.tier===3).slice(4) };
 
     await setDoc(doc(db,'rooms',code), {
-      hostId: user.uid, status: 'lobby',
-      board, decks, 
+      hostId: user.uid, status: 'lobby', board, decks, 
       bank: { white: 7, blue: 7, green: 7, red: 7, black: 7, gold: 5 },
-      nobles: NOBLES.slice(0, 4),
-      turnIndex: 0, turnOrder: []
+      nobles: NOBLES.slice(0, 4), turnIndex: 0, turnOrder: []
     });
     await setDoc(doc(db,'rooms',code,'players',user.uid), { 
       name: playerName, score: 0, 
@@ -191,7 +179,20 @@ export default function SplendorGameSafe() {
     await updateDoc(doc(db,'rooms',roomCode), { status: 'playing', turnOrder: order, turnIndex: 0 });
   };
 
-  // 1. 보석 가져오기
+  // 링크 복사 기능
+  const copyInviteLink = () => {
+    if (typeof window === 'undefined') return;
+    const url = `${window.location.origin.split('?')[0]}?room=${roomCode}`;
+    const el = document.createElement('textarea');
+    el.value = url;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    setCopyStatus('copied');
+    setTimeout(() => setCopyStatus(null), 2000);
+  };
+
   const confirmTakeGems = async () => {
     if (!myData) return;
     const counts = {};
@@ -210,19 +211,13 @@ export default function SplendorGameSafe() {
     const newBank = { ...roomData.bank };
     const myNewGems = { ...myData.gems };
     
-    selectedGems.forEach(c => {
-      newBank[c]--;
-      myNewGems[c]++;
-    });
+    selectedGems.forEach(c => { newBank[c]--; myNewGems[c]++; });
 
     await updateDoc(doc(db, 'rooms', roomCode), { bank: newBank, turnIndex: (roomData.turnIndex + 1) % players.length });
     await updateDoc(doc(db, 'rooms', roomCode, 'players', user.uid), { gems: myNewGems });
-    
-    setShowGemModal(false);
-    setSelectedGems([]);
+    setShowGemModal(false); setSelectedGems([]);
   };
 
-  // 2. 카드 구매
   const buyCard = async (card, fromReserved = false) => {
     if (!myData || !canBuy(card, myData)) return alert("자원이 부족합니다.");
 
@@ -235,12 +230,8 @@ export default function SplendorGameSafe() {
       const realCost = Math.max(0, cost - bonus);
       const myGem = myData.gems[color];
       
-      if (myGem >= realCost) {
-        payment[color] = realCost;
-      } else {
-        payment[color] = myGem;
-        remainingGoldNeeded += (realCost - myGem);
-      }
+      if (myGem >= realCost) payment[color] = realCost;
+      else { payment[color] = myGem; remainingGoldNeeded += (realCost - myGem); }
     }
 
     const newBank = { ...roomData.bank };
@@ -248,23 +239,14 @@ export default function SplendorGameSafe() {
     const myNewBonuses = { ...myData.bonuses };
     
     for (const c of COLORS) {
-      if (payment[c]) {
-        newBank[c] += payment[c];
-        myNewGems[c] -= payment[c];
-      }
+      if (payment[c]) { newBank[c] += payment[c]; myNewGems[c] -= payment[c]; }
     }
-    if (remainingGoldNeeded > 0) {
-      newBank.gold += remainingGoldNeeded;
-      myNewGems.gold -= remainingGoldNeeded;
-    }
+    if (remainingGoldNeeded > 0) { newBank.gold += remainingGoldNeeded; myNewGems.gold -= remainingGoldNeeded; }
 
     myNewBonuses[card.bonus]++;
     const newScore = myData.score + card.points;
 
-    const updates = { 
-      bank: newBank, 
-      turnIndex: (roomData.turnIndex + 1) % players.length 
-    };
+    const updates = { bank: newBank, turnIndex: (roomData.turnIndex + 1) % players.length };
 
     if (!fromReserved) {
       const tierBoard = [...roomData.board[card.tier]];
@@ -276,53 +258,40 @@ export default function SplendorGameSafe() {
       updates[`board.${card.tier}`] = tierBoard;
       updates[`decks.${card.tier}`] = tierDeck;
     } else {
-      await updateDoc(doc(db, 'rooms', roomCode, 'players', user.uid), {
-        reserved: arrayRemove(card)
-      });
+      await updateDoc(doc(db, 'rooms', roomCode, 'players', user.uid), { reserved: arrayRemove(card) });
     }
 
     await updateDoc(doc(db, 'rooms', roomCode), updates);
     await updateDoc(doc(db, 'rooms', roomCode, 'players', user.uid), {
-      gems: myNewGems,
-      bonuses: myNewBonuses,
-      score: newScore,
-      cards: arrayUnion(card)
+      gems: myNewGems, bonuses: myNewBonuses, score: newScore, cards: arrayUnion(card)
     });
-    
     setActiveCard(null);
   };
 
-  // 3. 찜하기
   const reserveCard = async (card) => {
     if (!myData || myData.reserved.length >= 3) return alert("3장까지만 찜 가능합니다.");
-
     const updates = { turnIndex: (roomData.turnIndex + 1) % players.length };
     const playerUpdates = { reserved: arrayUnion(card) };
-
     if (roomData.bank.gold > 0) {
       updates['bank.gold'] = roomData.bank.gold - 1;
       playerUpdates['gems.gold'] = (myData.gems.gold || 0) + 1;
     }
-
     const tierBoard = [...roomData.board[card.tier]];
     const cardIdx = tierBoard.findIndex(c => c.id === card.id);
     const tierDeck = [...roomData.decks[card.tier]];
     const newCard = tierDeck.pop();
     if (newCard) tierBoard[cardIdx] = newCard;
     else tierBoard.splice(cardIdx, 1);
-
     updates[`board.${card.tier}`] = tierBoard;
     updates[`decks.${card.tier}`] = tierDeck;
 
     await updateDoc(doc(db, 'rooms', roomCode), updates);
     await updateDoc(doc(db, 'rooms', roomCode, 'players', user.uid), playerUpdates);
-    
     setActiveCard(null);
   };
 
-
   // --- Render ---
-  if(!user) return <div className="h-screen flex items-center justify-center bg-slate-900 text-amber-500 font-bold">Splendor Connecting...</div>;
+  if(!user) return <div className="h-screen flex items-center justify-center bg-slate-900 text-amber-500 font-bold">Connecting...</div>;
 
   // 1. Lobby
   if (!roomData || roomData.status === 'lobby') {
@@ -341,7 +310,12 @@ export default function SplendorGameSafe() {
              </div>
            ) : (
              <div className="space-y-4">
-               <h3 className="font-bold text-slate-400">대기실 ({players.length})</h3>
+               <div className="flex justify-between items-center">
+                 <h3 className="font-bold text-slate-400">대기실 ({players.length})</h3>
+                 <button onClick={copyInviteLink} className="text-xs bg-slate-700 px-3 py-1.5 rounded-full flex gap-1 items-center hover:bg-slate-600">
+                    {copyStatus==='copied' ? <CheckCircle2 size={12} className="text-green-400"/> : <Share2 size={12}/>} 초대링크
+                 </button>
+               </div>
                <div className="space-y-2">
                  {players.map(p=><div key={p.id} className="flex gap-2 items-center"><div className="w-2 h-2 rounded-full bg-green-500"/>{p.name}</div>)}
                </div>
@@ -353,75 +327,53 @@ export default function SplendorGameSafe() {
     );
   }
 
-  // ★ [안전장치 2] 게임 중인데 내 정보가 아직 로딩 안 됐으면 대기
-  if (roomData.status === 'playing' && !myData) {
-    return <div className="h-screen flex items-center justify-center bg-slate-900 text-slate-400">플레이어 정보 로딩 중...</div>;
-  }
+  if (roomData.status === 'playing' && !myData) return <div className="h-screen flex items-center justify-center bg-slate-900 text-slate-400">로딩 중...</div>;
 
-  // 2. Main Game Board
   return (
     <div className="h-screen bg-slate-900 text-slate-100 font-sans flex flex-col overflow-hidden relative">
       
-      {/* Top: Opponents */}
-      <div className="flex p-2 gap-2 overflow-x-auto bg-slate-950 border-b border-slate-800 scrollbar-hide">
-        {players.filter(p => p.id !== user.uid).map(p => (
-          <div key={p.id} onClick={()=>setShowOpponent(p)} className="flex flex-col items-center min-w-[60px] cursor-pointer">
-            <div className={`w-10 h-10 rounded-full border-2 ${roomData.turnOrder[roomData.turnIndex]===p.id ? 'border-amber-500 ring-2 ring-amber-500/50' : 'border-slate-600'} bg-slate-800 flex items-center justify-center font-bold`}>
-              {p.name[0]}
+      {/* Top: Header & Opponents */}
+      <div className="flex items-center p-2 bg-slate-950 border-b border-slate-800">
+        <div className="mr-2 pr-2 border-r border-slate-800">
+           <button onClick={copyInviteLink} className="p-2 bg-slate-800 rounded-full text-slate-400 hover:text-white">
+             {copyStatus==='copied' ? <CheckCircle2 size={16} className="text-green-500"/> : <Share2 size={16}/>}
+           </button>
+        </div>
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide flex-1">
+          {players.filter(p => p.id !== user.uid).map(p => (
+            <div key={p.id} onClick={()=>setShowOpponent(p)} className="flex flex-col items-center min-w-[60px] cursor-pointer">
+              <div className={`w-10 h-10 rounded-full border-2 ${roomData.turnOrder[roomData.turnIndex]===p.id ? 'border-amber-500 ring-2 ring-amber-500/50' : 'border-slate-600'} bg-slate-800 flex items-center justify-center font-bold`}>
+                {p.name[0]}
+              </div>
+              <div className="flex items-center gap-1 text-xs mt-1 bg-slate-800 px-1.5 rounded-full"><Crown size={10} className="text-yellow-500"/> {p.score}</div>
             </div>
-            <div className="flex items-center gap-1 text-xs mt-1 bg-slate-800 px-1.5 rounded-full">
-              <Crown size={10} className="text-yellow-500"/> {p.score}
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* Center: Board */}
       <div className="flex-1 overflow-y-auto p-4 pb-40 space-y-6">
-        
-        {/* Nobles */}
         <div className="flex gap-2 overflow-x-auto pb-2">
           {roomData.nobles.map(noble => (
             <div key={noble.id} className="flex-shrink-0 w-20 h-20 bg-amber-100 rounded-lg border-2 border-amber-300 p-1 flex flex-col justify-between shadow-lg">
               <span className="font-black text-amber-800 text-lg leading-none">{noble.points}</span>
               <div className="flex flex-wrap gap-0.5 justify-end">
                 {Object.entries(noble.req).map(([color, count]) => count > 0 && (
-                  <div key={color} className={`w-4 h-5 ${GEM_STYLE[color]} text-[8px] flex items-center justify-center font-bold rounded-sm border-0`}>
-                    {count}
-                  </div>
+                  <div key={color} className={`w-4 h-5 ${GEM_STYLE[color]} text-[8px] flex items-center justify-center font-bold rounded-sm border-0`}>{count}</div>
                 ))}
               </div>
             </div>
           ))}
         </div>
 
-        {/* Card Grid */}
         {[3, 2, 1].map(tier => (
           <div key={tier} className="space-y-2">
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full ${tier===3?'bg-blue-400':tier===2?'bg-yellow-400':'bg-green-400'}`}/>
-              <span className="text-xs font-bold text-slate-500">Tier {tier}</span>
-            </div>
+            <div className="flex items-center gap-2"><div className={`w-2 h-2 rounded-full ${tier===3?'bg-blue-400':tier===2?'bg-yellow-400':'bg-green-400'}`}/><span className="text-xs font-bold text-slate-500">Tier {tier}</span></div>
             <div className="grid grid-cols-4 gap-2">
               {roomData.board[tier].map(card => (
-                <div 
-                  key={card.id} 
-                  onClick={() => setActiveCard(card)}
-                  className={`aspect-[2/3] bg-white rounded-lg p-1.5 flex flex-col justify-between cursor-pointer border-b-4 shadow-md transition-transform active:scale-95
-                    ${canBuy(card, myData) ? 'border-green-500 ring-2 ring-green-500/50' : 'border-slate-300'}
-                  `}
-                >
-                  <div className="flex justify-between items-start">
-                    <span className="text-lg font-black text-slate-800 leading-none">{card.points || ''}</span>
-                    <div className={`w-4 h-4 rounded-full ${GEM_STYLE[card.bonus]} border shadow-sm`}></div>
-                  </div>
-                  <div className="flex flex-col-reverse gap-0.5">
-                    {Object.entries(card.cost).map(([color, count]) => count > 0 && (
-                      <div key={color} className={`w-4 h-4 rounded-full ${GEM_STYLE[color]} border flex items-center justify-center text-[9px] font-bold`}>
-                        {count}
-                      </div>
-                    ))}
-                  </div>
+                <div key={card.id} onClick={() => setActiveCard(card)} className={`aspect-[2/3] bg-white rounded-lg p-1.5 flex flex-col justify-between cursor-pointer border-b-4 shadow-md transition-transform active:scale-95 ${canBuy(card, myData) ? 'border-green-500 ring-2 ring-green-500/50' : 'border-slate-300'}`}>
+                  <div className="flex justify-between items-start"><span className="text-lg font-black text-slate-800 leading-none">{card.points || ''}</span><div className={`w-4 h-4 rounded-full ${GEM_STYLE[card.bonus]} border shadow-sm`}></div></div>
+                  <div className="flex flex-col-reverse gap-0.5">{Object.entries(card.cost).map(([color, count]) => count > 0 && (<div key={color} className={`w-4 h-4 rounded-full ${GEM_STYLE[color]} border flex items-center justify-center text-[9px] font-bold`}>{count}</div>))}</div>
                 </div>
               ))}
             </div>
@@ -429,78 +381,46 @@ export default function SplendorGameSafe() {
         ))}
       </div>
 
-      {/* FAB */}
       {isMyTurn && (
-        <button 
-          onClick={() => setShowGemModal(true)}
-          className="absolute bottom-36 right-4 w-14 h-14 bg-gradient-to-br from-amber-500 to-amber-700 rounded-full shadow-2xl border-2 border-white/20 flex items-center justify-center animate-bounce-slow z-20"
-        >
+        <button onClick={() => setShowGemModal(true)} className="absolute bottom-36 right-4 w-14 h-14 bg-gradient-to-br from-amber-500 to-amber-700 rounded-full shadow-2xl border-2 border-white/20 flex items-center justify-center animate-bounce-slow z-20">
           <Gem size={28} className="text-white drop-shadow-md" />
         </button>
       )}
 
-      {/* Bottom: My Dashboard */}
+      {/* Bottom: Dashboard */}
       <div className="absolute bottom-0 w-full bg-slate-950/90 backdrop-blur-md border-t border-slate-800 p-4 pb-6 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-10">
         <div className="flex justify-between items-end mb-3">
           <div>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">{myData.name}</p>
-            <div className="flex items-center gap-2">
-              <span className="text-3xl font-black text-white">{myData.score}</span>
-              <span className="text-xs text-slate-500 font-bold">Points</span>
-            </div>
+            <div className="flex items-center gap-2"><span className="text-3xl font-black text-white">{myData.score}</span><span className="text-xs text-slate-500 font-bold">Points</span></div>
           </div>
           {isMyTurn && <div className="px-3 py-1 bg-green-500 text-white text-xs font-bold rounded-full animate-pulse">MY TURN</div>}
         </div>
-        
         <div className="flex justify-between gap-1">
           {[...COLORS, 'gold'].map(color => (
             <div key={color} className="flex flex-col items-center gap-1 flex-1">
               <div className={`relative w-10 h-10 rounded-full ${GEM_STYLE[color]} border-2 shadow-inner flex items-center justify-center`}>
                 <span className="font-black text-sm drop-shadow-md">{myData.gems[color]}</span>
-                {color !== 'gold' && myData.bonuses[color] > 0 && (
-                  <div className="absolute -top-2 -right-2 bg-slate-800 border border-slate-600 w-5 h-5 rounded flex items-center justify-center text-[9px] text-white">
-                    +{myData.bonuses[color]}
-                  </div>
-                )}
+                {color !== 'gold' && myData.bonuses[color] > 0 && <div className="absolute -top-2 -right-2 bg-slate-800 border border-slate-600 w-5 h-5 rounded flex items-center justify-center text-[9px] text-white">+{myData.bonuses[color]}</div>}
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* --- MODALS --- */}
+      {/* Modals */}
       {activeCard && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-6" onClick={() => setActiveCard(null)}>
           <div className="bg-white w-full max-w-sm rounded-3xl p-6 shadow-2xl relative" onClick={e => e.stopPropagation()}>
             <div className="aspect-[2/3] bg-slate-100 rounded-2xl border-4 border-slate-200 p-4 mb-6 relative overflow-hidden">
                <div className={`absolute top-0 right-0 p-6 rounded-bl-[3rem] ${GEM_STYLE[activeCard.bonus]} opacity-20`}></div>
-               <div className="flex justify-between items-start mb-8">
-                 <span className="text-5xl font-black text-slate-800">{activeCard.points || ''}</span>
-                 <div className={`w-12 h-12 rounded-full ${GEM_STYLE[activeCard.bonus]} border-4 border-white shadow-lg`}></div>
-               </div>
-               <div className="space-y-2 absolute bottom-4 left-4">
-                  {Object.entries(activeCard.cost).map(([color, count]) => count > 0 && (
-                    <div key={color} className={`w-8 h-8 rounded-full ${GEM_STYLE[color]} border-2 border-white shadow-md flex items-center justify-center font-bold text-sm`}>
-                      {count}
-                    </div>
-                  ))}
-               </div>
+               <div className="flex justify-between items-start mb-8"><span className="text-5xl font-black text-slate-800">{activeCard.points || ''}</span><div className={`w-12 h-12 rounded-full ${GEM_STYLE[activeCard.bonus]} border-4 border-white shadow-lg`}></div></div>
+               <div className="space-y-2 absolute bottom-4 left-4">{Object.entries(activeCard.cost).map(([color, count]) => count > 0 && (<div key={color} className={`w-8 h-8 rounded-full ${GEM_STYLE[color]} border-2 border-white shadow-md flex items-center justify-center font-bold text-sm`}>{count}</div>))}</div>
             </div>
             {isMyTurn && (
               <div className="flex gap-3">
-                <button 
-                  onClick={() => buyCard(activeCard)}
-                  disabled={!canBuy(activeCard, myData)}
-                  className="flex-1 bg-green-600 disabled:bg-slate-300 text-white py-4 rounded-xl font-bold text-lg shadow-lg"
-                >
-                  구매
-                </button>
-                <button 
-                  onClick={() => reserveCard(activeCard)}
-                  className="flex-1 bg-amber-500 text-white py-4 rounded-xl font-bold text-lg shadow-lg"
-                >
-                  찜 (+🪙)
-                </button>
+                <button onClick={() => buyCard(activeCard)} disabled={!canBuy(activeCard, myData)} className="flex-1 bg-green-600 disabled:bg-slate-300 text-white py-4 rounded-xl font-bold text-lg shadow-lg">구매</button>
+                <button onClick={() => reserveCard(activeCard)} className="flex-1 bg-amber-500 text-white py-4 rounded-xl font-bold text-lg shadow-lg">찜</button>
               </div>
             )}
           </div>
@@ -516,18 +436,7 @@ export default function SplendorGameSafe() {
                 const count = selectedGems.filter(g => g === c).length;
                 const left = roomData.bank[c] - count;
                 return (
-                  <button 
-                    key={c} 
-                    disabled={left <= 0 || (count >= 2) || (selectedGems.length >= 3 && !selectedGems.includes(c))}
-                    onClick={() => {
-                      if (selectedGems.includes(c)) setSelectedGems(selectedGems.filter((_, i) => i !== selectedGems.indexOf(c))); 
-                      else setSelectedGems([...selectedGems, c]); 
-                    }}
-                    className={`aspect-square rounded-2xl flex flex-col items-center justify-center gap-1 border-2 transition-all
-                      ${GEM_STYLE[c]} ${count > 0 ? 'ring-4 ring-white scale-105' : 'opacity-80'}
-                      ${left <= 0 ? 'opacity-30 grayscale cursor-not-allowed' : ''}
-                    `}
-                  >
+                  <button key={c} disabled={left <= 0 || (count >= 2) || (selectedGems.length >= 3 && !selectedGems.includes(c))} onClick={() => { if (selectedGems.includes(c)) setSelectedGems(selectedGems.filter((_, i) => i !== selectedGems.indexOf(c))); else setSelectedGems([...selectedGems, c]); }} className={`aspect-square rounded-2xl flex flex-col items-center justify-center gap-1 border-2 transition-all ${GEM_STYLE[c]} ${count > 0 ? 'ring-4 ring-white scale-105' : 'opacity-80'} ${left <= 0 ? 'opacity-30 grayscale cursor-not-allowed' : ''}`}>
                     <div className="font-black text-lg">{left}</div>
                     {count > 0 && <div className="absolute top-1 right-1 bg-white text-black w-5 h-5 rounded-full text-xs flex items-center justify-center font-bold border">{count}</div>}
                   </button>
@@ -536,7 +445,7 @@ export default function SplendorGameSafe() {
             </div>
             <div className="flex gap-2">
               <button onClick={() => { setShowGemModal(false); setSelectedGems([]); }} className="flex-1 bg-slate-800 text-slate-300 py-3 rounded-xl font-bold">취소</button>
-              <button onClick={confirmTakeGems} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg">확인</button>
+              <button onClick={confirmTakeGems} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-blue-500/30">가져오기</button>
             </div>
           </div>
         </div>
@@ -545,7 +454,7 @@ export default function SplendorGameSafe() {
       {showOpponent && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-6" onClick={() => setShowOpponent(null)}>
            <div className="bg-white w-full max-w-xs rounded-2xl p-6" onClick={e => e.stopPropagation()}>
-              <h3 className="text-2xl font-black text-slate-800 mb-4">{showOpponent.name}의 자원</h3>
+              <h3 className="text-2xl font-black text-slate-800 mb-4">{showOpponent.name}</h3>
               <div className="grid grid-cols-3 gap-2">
                  {[...COLORS, 'gold'].map(c => (
                    <div key={c} className={`p-3 rounded-xl flex flex-col items-center ${GEM_STYLE[c]}`}>
@@ -556,15 +465,12 @@ export default function SplendorGameSafe() {
                  ))}
               </div>
               <div className="mt-4 pt-4 border-t">
-                <p className="text-xs text-slate-500 font-bold mb-2">찜한 카드 ({showOpponent.reserved.length})</p>
-                <div className="flex gap-2">
-                   {showOpponent.reserved.map(c => <div key={c.id} className="w-8 h-12 bg-slate-200 rounded border border-slate-300"></div>)}
-                </div>
+                <p className="text-xs text-slate-500 font-bold mb-2">찜한 카드</p>
+                <div className="flex gap-2">{showOpponent.reserved.map(c => <div key={c.id} className="w-8 h-12 bg-slate-200 rounded border border-slate-300"></div>)}</div>
               </div>
            </div>
         </div>
       )}
-
     </div>
   );
-                 }
+  }
